@@ -24,20 +24,33 @@ To check that your preferred name isn't already in use, visit the (future) Charm
 ```text
 https://charmhub.io/mega-calendar-k8s
 ```
-(create-a-repository-and-initialise-it)=
-## Create a repository and initialise it
+
+If your charm doesn't operate a workload, name your charm `foo-integrator` if it passes user configuration to another charm or passes information from one charm to another.
+
+(create-a-repository)=
+## Create a repository
 
 Create a repository with your source control of choice.
 
 ```{admonition} Best practice
 :class: hint
 
-Name the repository using the pattern ``<charm name>-operator`` for a single charm managing a workload. Workloadless charms managing integration with another charm should use the suffix ``integrator`` instead. Charms managing configuration for another charm should use ``configurator``. Monorepos containing multiple related charms should instead use a plural suffix, like ``operators``. For the charm name, see [](#decide-your-charms-name).
+If your charm operates a workload, name the repository `<charm name>-operator`. If your charm doesn't operate a workload, name the repository `<charm name>`, including the `-integrator` suffix.
 ```
 
 For example, name the repository `mega-calendar-k8s-operator` if your charm will be called `mega-calendar-k8s`.
 
-Next, use {external+charmcraft:doc}`Charmcraft <index>` to generate the recommended project structure in the repository:
+Use a different naming pattern if the repository contains multiple charms or artefacts (such as rocks).
+
+Examples:
+
+- [kafka-operator](https://github.com/canonical/kafka-operator) - Contains a single charm that operates a workload.
+- [katib-operators](https://github.com/canonical/katib-operators) - Contains multiple charms.
+- [s3-integrator](https://github.com/canonical/s3-integrator) - Passes user configuration to another charm.
+
+## Initialise the repository
+
+Use {external+charmcraft:doc}`Charmcraft <index>` to generate the recommended project structure in the repository:
 
 ```text
 charmcraft init --name mega-calendar-k8s --profile kubernetes
