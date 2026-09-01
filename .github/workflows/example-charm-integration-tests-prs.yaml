@@ -7,11 +7,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  # Cancel in-flight runs when new commits are pushed to the same PR.
-  group: example-charm-integration-tests-prs-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   test-charm:
     runs-on: ubuntu-latest
