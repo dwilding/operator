@@ -47,7 +47,7 @@ jobs:
           image=$(echo "$manifest" | jq -r '.ImageName')
           username=$(echo "$manifest" | jq -r '.Username')
           password=$(echo "$manifest" | jq -r '.Password')
-          /snap/k8s/current/bin/ctr -n k8s.io image pull --user "$username:$password" "$image"
+          sudo /snap/k8s/current/bin/ctr --address /var/snap/k8s/current/run/containerd.sock -n k8s.io image pull --user "$username:$password" "$image"
       - name: Fetch any charmlibs
         run: |
           cd ${{ matrix.dir }}
