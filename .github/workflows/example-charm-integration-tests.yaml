@@ -47,11 +47,7 @@ jobs:
           image=$(echo "$manifest" | jq -r '.ImageName')
           username=$(echo "$manifest" | jq -r '.Username')
           password=$(echo "$manifest" | jq -r '.Password')
-          auth_file=$(mktemp)
-          printf '{"auths": {"https://index.docker.io/v1/": {"auth": "%s"}}}' \
-            "$(printf '%s:%s' "$username" "$password" | base64 -w0)" > "$auth_file"
-          /snap/k8s/current/bin/ctr -n k8s.io image pull --auth-file "$auth_file" "$image"
-          rm -f "$auth_file"
+          /snap/k8s/current/bin/ctr -n k8s.io image pull --user "$username:$password" "$image"
       - name: Fetch any charmlibs
         run: |
           cd ${{ matrix.dir }}
