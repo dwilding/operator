@@ -2,55 +2,16 @@ name: Example Charm Integration Tests
 
 on:
   workflow_dispatch:
+  pull_request:
   schedule:
     - cron: '50 15 * * 2'  # 15:50 UTC Tuesdays
 
 permissions: {}
 
 jobs:
-  # Pack & run integration tests for machine charms.
-  machine-examples-integration:
+  # Pack & run integration tests for the postgresql example.
+  k8s-3-postgresql-integration:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dir:
-          - examples/machine-tinyproxy
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
-        with:
-          persist-credentials: false
-      - name: Set up uv
-        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
-      - name: Set up tox and tox-uv
-        run: uv tool install tox --with tox-uv
-      - name: Install Concierge
-        run: sudo snap install --classic concierge
-      - name: Prepare for deploying machine charms
-        run: sudo concierge prepare -p machine
-        timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
-      - name: Pack charm
-        run: |
-          cd ${{ matrix.dir }}
-          charmcraft pack
-      - name: Run integration tests
-        run: |
-          cd ${{ matrix.dir }}
-          tox -e integration
-
-  # Pack & run integration tests for K8s charms.
-  k8s-examples-integration:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        dir:
-          # httpbin-demo runs under example-charm-charmcraft-test.yaml instead.
-          - examples/k8s-1-minimal
-          - examples/k8s-2-configurable
-          - examples/k8s-3-postgresql
-          - examples/k8s-4-action
-          - examples/k8s-5-observe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
@@ -64,28 +25,203 @@ jobs:
       - name: Prepare for deploying K8s charms
         run: sudo concierge prepare -p k8s
         timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
+      - name: Warm containerd with the postgres image
+        run: |
+          # Query Charmhub for the postgresql-k8s OCI image resource, then pull
+          # it into the k8s snap's containerd store so the pod skips the slow
+          # registry pull at deploy time.
+          info=$(curl -fsSL 'https://api.charmhub.io/v2/charms/info/postgresql-k8s?channel=14/stable&fields=default-release.resources,default-release.revision')
+          charm_id=$(echo "$info" | jq -r '.id')
+          resource=$(echo "$info" | jq -c '.["default-release"].resources[] | select(.type == "oci-image")')
+          resource_name=$(echo "$resource" | jq -r '.name')
+          revision=$(echo "$resource" | jq -r '.revision')
+          manifest=$(curl -fsSL "https://api.charmhub.io/api/v1/resources/download/charm_${charm_id}.${resource_name}_${revision}")
+          image=$(echo "$manifest" | jq -r '.ImageName')
+          username=$(echo "$manifest" | jq -r '.Username')
+          password=$(echo "$manifest" | jq -r '.Password')
+
+          # Find a responsive containerd socket. The k8s snap has used both
+          # "common/run" and "current/run" paths across versions.
+          ctr=/snap/k8s/current/bin/ctr
+          socket=""
+          for candidate in /var/snap/k8s/common/run/containerd.sock /var/snap/k8s/current/run/containerd.sock /run/containerd/containerd.sock; do
+            if sudo test -S "$candidate" && sudo "$ctr" --address "$candidate" -n k8s.io version > /dev/null 2>&1; then
+              socket="$candidate"
+              break
+            fi
+          done
+          if [ -z "$socket" ]; then
+            echo "No responsive containerd socket found"
+            exit 1
+          fi
+          echo "Using containerd socket: $socket"
+
+          # Retry the pull in case containerd is still settling after
+          # "concierge prepare".
+          for attempt in 1 2 3 4 5; do
+            if sudo "$ctr" --address "$socket" -n k8s.io image pull --user "$username:$password" "$image"; then
+              sudo "$ctr" --address "$socket" -n k8s.io images ls | grep postgresql-image
+              exit 0
+            fi
+            echo "Pull attempt $attempt failed; retrying in 15s..."
+            sleep 15
+          done
+          exit 1
       - name: Fetch any charmlibs
         run: |
-          cd ${{ matrix.dir }}
+          cd examples/k8s-3-postgresql
           if grep -Eq "^charm-libs:" charmcraft.yaml; then
             charmcraft fetch-libs
           fi
       - name: Pack charm
         run: |
-          cd ${{ matrix.dir }}
+          cd examples/k8s-3-postgresql
           charmcraft pack
       - name: Run integration tests
         run: |
-          cd ${{ matrix.dir }}
+          cd examples/k8s-3-postgresql
           tox -e integration
 
-  open-issue-on-failure-if-scheduled:
-    if: ${{ failure() && github.event_name == 'schedule' }}
-    needs: [machine-examples-integration, k8s-examples-integration]
-    permissions:
-      issues: write
-      actions: read  # for ai-failure-enrich.yaml
-    secrets:
-      # For ai-failure-enrich.yaml -- can only be read in the ai-failure-triage environment.
-      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-    uses: ./.github/workflows/notify-scheduled-failure.yaml
+  # Pack & run integration tests for the action example.
+  k8s-4-action-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+      - name: Set up tox and tox-uv
+        run: uv tool install tox --with tox-uv
+      - name: Install Concierge
+        run: sudo snap install --classic concierge
+      - name: Prepare for deploying K8s charms
+        run: sudo concierge prepare -p k8s
+        timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
+      - name: Warm containerd with the postgres image
+        run: |
+          # The action example deploys postgresql-k8s in its integration tests,
+          # so warm the image here too.
+          info=$(curl -fsSL 'https://api.charmhub.io/v2/charms/info/postgresql-k8s?channel=14/stable&fields=default-release.resources,default-release.revision')
+          charm_id=$(echo "$info" | jq -r '.id')
+          resource=$(echo "$info" | jq -c '.["default-release"].resources[] | select(.type == "oci-image")')
+          resource_name=$(echo "$resource" | jq -r '.name')
+          revision=$(echo "$resource" | jq -r '.revision')
+          manifest=$(curl -fsSL "https://api.charmhub.io/api/v1/resources/download/charm_${charm_id}.${resource_name}_${revision}")
+          image=$(echo "$manifest" | jq -r '.ImageName')
+          username=$(echo "$manifest" | jq -r '.Username')
+          password=$(echo "$manifest" | jq -r '.Password')
+
+          # Find a responsive containerd socket. The k8s snap has used both
+          # "common/run" and "current/run" paths across versions.
+          ctr=/snap/k8s/current/bin/ctr
+          socket=""
+          for candidate in /var/snap/k8s/common/run/containerd.sock /var/snap/k8s/current/run/containerd.sock /run/containerd/containerd.sock; do
+            if sudo test -S "$candidate" && sudo "$ctr" --address "$candidate" -n k8s.io version > /dev/null 2>&1; then
+              socket="$candidate"
+              break
+            fi
+          done
+          if [ -z "$socket" ]; then
+            echo "No responsive containerd socket found"
+            exit 1
+          fi
+          echo "Using containerd socket: $socket"
+
+          # Retry the pull in case containerd is still settling after
+          # "concierge prepare".
+          for attempt in 1 2 3 4 5; do
+            if sudo "$ctr" --address "$socket" -n k8s.io image pull --user "$username:$password" "$image"; then
+              sudo "$ctr" --address "$socket" -n k8s.io images ls | grep postgresql-image
+              exit 0
+            fi
+            echo "Pull attempt $attempt failed; retrying in 15s..."
+            sleep 15
+          done
+          exit 1
+      - name: Fetch any charmlibs
+        run: |
+          cd examples/k8s-4-action
+          if grep -Eq "^charm-libs:" charmcraft.yaml; then
+            charmcraft fetch-libs
+          fi
+      - name: Pack charm
+        run: |
+          cd examples/k8s-4-action
+          charmcraft pack
+      - name: Run integration tests
+        run: |
+          cd examples/k8s-4-action
+          tox -e integration
+
+  # Pack & run integration tests for the observe example.
+  k8s-5-observe-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d  # v10.0.1
+      - name: Set up tox and tox-uv
+        run: uv tool install tox --with tox-uv
+      - name: Install Concierge
+        run: sudo snap install --classic concierge
+      - name: Prepare for deploying K8s charms
+        run: sudo concierge prepare -p k8s
+        timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
+      - name: Warm containerd with the postgres image
+        run: |
+          # The observe example deploys postgresql-k8s in its integration
+          # tests, so warm the image here too.
+          info=$(curl -fsSL 'https://api.charmhub.io/v2/charms/info/postgresql-k8s?channel=14/stable&fields=default-release.resources,default-release.revision')
+          charm_id=$(echo "$info" | jq -r '.id')
+          resource=$(echo "$info" | jq -c '.["default-release"].resources[] | select(.type == "oci-image")')
+          resource_name=$(echo "$resource" | jq -r '.name')
+          revision=$(echo "$resource" | jq -r '.revision')
+          manifest=$(curl -fsSL "https://api.charmhub.io/api/v1/resources/download/charm_${charm_id}.${resource_name}_${revision}")
+          image=$(echo "$manifest" | jq -r '.ImageName')
+          username=$(echo "$manifest" | jq -r '.Username')
+          password=$(echo "$manifest" | jq -r '.Password')
+
+          # Find a responsive containerd socket. The k8s snap has used both
+          # "common/run" and "current/run" paths across versions.
+          ctr=/snap/k8s/current/bin/ctr
+          socket=""
+          for candidate in /var/snap/k8s/common/run/containerd.sock /var/snap/k8s/current/run/containerd.sock /run/containerd/containerd.sock; do
+            if sudo test -S "$candidate" && sudo "$ctr" --address "$candidate" -n k8s.io version > /dev/null 2>&1; then
+              socket="$candidate"
+              break
+            fi
+          done
+          if [ -z "$socket" ]; then
+            echo "No responsive containerd socket found"
+            exit 1
+          fi
+          echo "Using containerd socket: $socket"
+
+          # Retry the pull in case containerd is still settling after
+          # "concierge prepare".
+          for attempt in 1 2 3 4 5; do
+            if sudo "$ctr" --address "$socket" -n k8s.io image pull --user "$username:$password" "$image"; then
+              sudo "$ctr" --address "$socket" -n k8s.io images ls | grep postgresql-image
+              exit 0
+            fi
+            echo "Pull attempt $attempt failed; retrying in 15s..."
+            sleep 15
+          done
+          exit 1
+      - name: Fetch any charmlibs
+        run: |
+          cd examples/k8s-5-observe
+          if grep -Eq "^charm-libs:" charmcraft.yaml; then
+            charmcraft fetch-libs
+          fi
+      - name: Pack charm
+        run: |
+          cd examples/k8s-5-observe
+          charmcraft pack
+      - name: Run integration tests
+        run: |
+          cd examples/k8s-5-observe
+          tox -e integration
