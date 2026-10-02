@@ -138,7 +138,7 @@ requires-dist = [{ name = "ops", specifier = "~=3.7" }]
 [package.metadata.requires-dev]
 integration = [
     { name = "jubilant", specifier = ">=1.8,<2" },
-    { name = "jubilant-prewire", git = "https://github.com/dwilding/jubilant-prewire?rev=e440046" },
+    { name = "jubilant-prewire", git = "https://github.com/dwilding/jubilant-prewire?rev=f983516" },
     { name = "pytest" },
     { name = "pytest-jubilant", specifier = ">=2.0.1,<3" },
     { name = "pyyaml" },
@@ -190,7 +190,7 @@ wheels = [
 [[package]]
 name = "jubilant-prewire"
 version = "0.0.1"
-source = { git = "https://github.com/dwilding/jubilant-prewire?rev=e440046#e440046bf1f82b3f42066d8f59e6aa9c767676e4" }
+source = { git = "https://github.com/dwilding/jubilant-prewire?rev=f983516#f983516accc9e5ed5c11cb77882eaa8c357442bd" }
 dependencies = [
     { name = "jubilant" },
     { name = "pyyaml" },
