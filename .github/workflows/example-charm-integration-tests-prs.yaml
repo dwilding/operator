@@ -8,53 +8,72 @@ on:
 permissions: {}
 
 jobs:
-  test-charm:
+  selection:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - dir: examples/machine-tinyproxy
-            profile: machine
-          - dir: examples/k8s-1-minimal
-            profile: k8s
-          - dir: examples/k8s-2-configurable
-            profile: k8s
-          - dir: examples/k8s-3-postgresql
-            profile: k8s
-          - dir: examples/k8s-4-action
-            profile: k8s
-          - dir: examples/k8s-5-observe
-            profile: k8s
-          - dir: examples/httpbin-demo
-            profile: k8s
+    outputs:
+      k8s-charms: ${{ steps.k8s.outputs.charms }}
+      machine-charms: ${{ steps.machine.outputs.charms }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           persist-credentials: false
           fetch-depth: 0  # Need full history to diff against the base branch.
-      - id: select
-        name: Check whether this charm has changed
+      - name: Select the Kubernetes example charms changed in this pull request
+        id: k8s
         run: |
-          # GITHUB_BASE_REF is a default env var set by GitHub Actions.
           base="origin/$GITHUB_BASE_REF"
-          if git diff --name-only "$base...HEAD" -- "${{ matrix.dir }}/" | grep -q .; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          fi
+          charms=$(
+            for charm in \
+              examples/k8s-1-minimal \
+              examples/k8s-2-configurable \
+              examples/k8s-3-postgresql \
+              examples/k8s-4-action \
+              examples/k8s-5-observe \
+              examples/httpbin-demo
+            do
+              if [ "$(git diff --name-only "$base...HEAD" -- "$charm/")" ]; then
+                printf '"%s"\n' "$charm"
+              fi
+            done | jq --slurp --compact-output .
+          )
+          echo "charms=$charms" >> "$GITHUB_OUTPUT"
+      - name: Select the machine example charms changed in this pull request
+        id: machine
+        run: |
+          base="origin/$GITHUB_BASE_REF"
+          charms=$(
+            for charm in \
+              examples/machine-tinyproxy
+            do
+              if [ "$(git diff --name-only "$base...HEAD" -- "$charm/")" ]; then
+                printf '"%s"\n' "$charm"
+              fi
+            done | jq --slurp --compact-output .
+          )
+          echo "charms=$charms" >> "$GITHUB_OUTPUT"
+
+  k8s-examples-integration:
+    needs: selection
+    if: ${{ needs.selection.outputs.k8s-charms != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.selection.outputs.k8s-charms) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
       - name: Set up uv
-        if: ${{ steps.select.outputs.run == 'true' }}
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
       - name: Install tox, tox-uv, and Concierge
-        if: ${{ steps.select.outputs.run == 'true' }}
         run: |
           uv tool install tox --with tox-uv
           sudo snap install --classic concierge
-      - name: Prepare for deploying charms
-        if: ${{ steps.select.outputs.run == 'true' }}
-        run: sudo concierge prepare -p ${{ matrix.profile }}
+      - name: Prepare for deploying K8s charms
+        run: sudo concierge prepare -p k8s
         timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
       - name: Fetch libs and pack the charm
-        if: ${{ steps.select.outputs.run == 'true' }}
         working-directory: ${{ matrix.dir }}
         run: |
           if grep -Eq "^charm-libs:" charmcraft.yaml; then
@@ -62,6 +81,33 @@ jobs:
           fi
           charmcraft pack
       - name: Run integration tests
-        if: ${{ steps.select.outputs.run == 'true' }}
+        working-directory: ${{ matrix.dir }}
+        run: tox -e integration
+
+  machine-examples-integration:
+    needs: selection
+    if: ${{ needs.selection.outputs.machine-charms != '[]' }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: ${{ fromJSON(needs.selection.outputs.machine-charms) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9  # v9.0.0
+      - name: Install tox, tox-uv, and Concierge
+        run: |
+          uv tool install tox --with tox-uv
+          sudo snap install --classic concierge
+      - name: Prepare for deploying machine charms
+        run: sudo concierge prepare -p machine
+        timeout-minutes: 90  # Abandon the job if the GHA runner gets stuck.
+      - name: Pack charm
+        working-directory: ${{ matrix.dir }}
+        run: charmcraft pack
+      - name: Run integration tests
         working-directory: ${{ matrix.dir }}
         run: tox -e integration
