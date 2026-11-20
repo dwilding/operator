@@ -1,7 +1,7 @@
 # This file configures Charmcraft.
 # See https://documentation.ubuntu.com/charmcraft/stable/reference/files/charmcraft-yaml-file/
 type: charm
-name: fastapi-demo  # name
+name: fastapi-demo
 title: Web Server Demo
 summary: A demo charm that operates a small Python FastAPI server.
 description: |
