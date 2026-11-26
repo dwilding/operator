@@ -13,7 +13,7 @@ import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Generic, cast
 
-import ops
+import op
 import ops.storage
 from ops._main import _Abort, _Dispatcher, _Manager
 from ops._main import logger as ops_logger

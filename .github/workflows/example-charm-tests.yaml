@@ -60,6 +60,17 @@ jobs:
         run: |
           cd ${{ matrix.dir }}
           tox -e unit
+      - name: Run unit tests with Ops and Scenario from this branch
+        # The step above uses the versions from PyPI, as the tutorials do. This one catches a
+        # change on this branch that breaks the example charms before it is released.
+        working-directory: ${{ matrix.dir }}
+        env:
+          # The same paths as the charm's tox.ini.
+          PYTHONPATH: 'lib:src'
+        run: |
+          uv sync --group=unit
+          uv pip install ../.. ../../testing
+          uv run --no-sync pytest -v --tb native tests/unit
       - name: Write type checker requirements files
         shell: uv run --script --no-project {0}
         run: |
